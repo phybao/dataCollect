@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -23,12 +21,9 @@ def trilaterate(cx1, cy1, d1, cx2, cy2, d2):
         return None, None
 
     x = (d1**2 - d2**2 + distance**2) / (2 * distance)
-    y = math.sqrt(max(0, d1**2 - x**2))  # Ensure no negative values inside sqrt
+    y = -math.sqrt(d1**2 - x**2)
 
-    lidar_x = cx1 + x * dx / distance - y * dy / distance
-    lidar_y = cy1 + x * dy / distance + y * dx / distance
-
-    return lidar_x, lidar_y
+    return x, y
 
 def fit_circle(x, y):
     """
@@ -44,19 +39,16 @@ def fit_circle(x, y):
 
 class LocalizationNode(Node):
     def __init__(self):
-        super().__init__('Localization_node')
+        super().__init__('localization_node')
         self.subscription = self.create_subscription(
             LaserScan,
             'scan',
             self.lidar_callback,
             10)
-        self.csv_file = 'lidar_positions.csv'
         self.get_logger().info('Localization Node Started')
-
-        # Prepare CSV file
-        with open(self.csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['LIDAR_X', 'LIDAR_Y'])
+        self.csv_file = open('lidar_positions.csv', mode='w', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+        self.csv_writer.writerow(['Lidar_X', 'Lidar_Y'])
 
     def lidar_callback(self, msg):
         ranges = msg.ranges
@@ -77,33 +69,47 @@ class LocalizationNode(Node):
             self.get_logger().info("No valid lidar data.")
             return
 
-        model = DBSCAN(eps=0.1, min_samples=5)
-        labels = model.fit_predict(lidarXY)
+        ESP = 0.1
+        SAMPLES = 5
+        model = DBSCAN(eps=ESP, min_samples=SAMPLES)
+        db = model.fit(lidarXY)
+        labels = db.labels_
 
-        unique_labels = np.unique(labels)
+        ls, cs = np.unique(labels, return_counts=True)
+        dic = dict(zip(ls, cs))
+
+        MIN_POINT = 10
+        MAX_POINT = 50
+        idx = [i for i, label in enumerate(labels) if dic[label] < MAX_POINT and dic[label] > MIN_POINT and label >= 0]
+        clusters = {label: [i for i in idx if db.labels_[i] == label] for label in np.unique(db.labels_[idx])}
+
         centers = []
-        for label in unique_labels:
-            if label == -1:
-                continue
+        for label, group_idx in clusters.items():
+            group_idx = np.array(group_idx)
+            x_coords = lidarXY[group_idx, 0]
+            y_coords = lidarXY[group_idx, 1]
 
-            cluster_points = lidarXY[labels == label]
-            if 10 <= len(cluster_points) <= 50:
-                cx, cy, radius = fit_circle(cluster_points[:, 0], cluster_points[:, 1])
-                if 0.02 <= radius <= 0.3:
-                    centers.append((cx, cy, radius))
+            cx, cy, radius = fit_circle(x_coords, y_coords)
+
+            MIN_RADIUS = 0.02
+            MAX_RADIUS = 0.3
+            if MIN_RADIUS <= radius <= MAX_RADIUS:
+                d = math.sqrt(cx**2 + cy**2)
+                centers.append((cx, cy, radius, d))
+
+        centers.sort(key=lambda center: center[2], reverse=True)
 
         if len(centers) >= 2:
-            centers.sort(key=lambda c: c[2], reverse=True)
-            (cx1, cy1, r1), (cx2, cy2, r2) = centers[:2]
-            lidar_x, lidar_y = trilaterate(cx1, cy1, r1, cx2, cy2, r2)
+            (cx1, cy1, r1, d1), (cx2, cy2, r2, d2) = centers[:2]
+            lidar_x, lidar_y = trilaterate(cx1, cy1, d1, cx2, cy2, d2)
 
-            if lidar_x is not None and lidar_y is not None:
+            if lidar_x is not None:
                 self.get_logger().info(f"LIDAR Position: ({lidar_x:.2f}, {lidar_y:.2f})")
+                self.csv_writer.writerow([lidar_x, lidar_y])
 
-                # Save to CSV
-                with open(self.csv_file, mode='a', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow([lidar_x, lidar_y])
+    def destroy_node(self):
+        self.csv_file.close()
+        super().destroy_node()
 
 def main(args=None):
     rclpy.init(args=args)
