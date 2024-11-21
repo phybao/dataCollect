@@ -10,7 +10,7 @@ from sklearn.cluster import DBSCAN
 from matplotlib import pyplot as plt
 import numpy.linalg as la
 from matplotlib.patches import Circle
-
+output_file = "/home/babyshark/ros2_ws/output/lidar_data.csv" 
 # TO DO: WRITE YOUR CODE HERE
 def trilaterate(cx1, cy1, d1, cx2, cy2, d2):
     """
