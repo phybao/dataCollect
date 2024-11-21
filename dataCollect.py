@@ -181,6 +181,12 @@ class LocalizationNode(Node):
             if lidar_x is not None:
                 self.get_logger().info(f"LIDAR Position: ({lidar_x:.2f}, {lidar_y:.2f})")
 
+                # Save lidar_x and lidar_y to a CSV file
+                with open(output_file, mode='a', newline='') as file:
+                   writer = csv.writer(file)
+                   writer.writerow([lidar_x, lidar_y])
+
+
             else:
                 self.get_logger().info("Trilateration failed: No intersection.")
 
@@ -191,7 +197,7 @@ class LocalizationNode(Node):
         plt.legend(loc='upper right')
         plt.axis('equal')
         plt.grid(True)
-        plt.show()
+        # plt.show()
 
 def main(args=None):
     rclpy.init(args=args)
